@@ -1,0 +1,10 @@
+{
+  "name": "haven-harbor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "test": "bun test src/*.test.ts"
+  }
+}
