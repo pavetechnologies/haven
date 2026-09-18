@@ -1,0 +1,8 @@
+node_modules/
+platform/data/
+ui/dist/
+**/.env
+*.db
+.DS_Store
+.worktrees/
+graphify-out/

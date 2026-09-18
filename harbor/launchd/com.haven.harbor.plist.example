@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.haven.harbor</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/bun</string>
+    <string>run</string>
+    <string>$HAVEN_ROOT/harbor/src/index.ts</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>$HAVEN_ROOT/harbor</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HAVEN_URL</key>
+    <string>http://127.0.0.1:19090</string>
+    <key>HAVEN_BUOY_ID</key>
+    <string>SET_FROM_BUOY_REGISTRATION</string>
+    <key>HAVEN_BUOY_TOKEN</key>
+    <string>SET_IN_LOCAL_COPY</string>
+    <key>HAVEN_CANARY_PEPPER</key>
+    <string>SET_IN_LOCAL_COPY</string>
+    <key>HAVEN_PACKAGE_PUBLIC_KEY</key>
+    <string>SET_FROM_BUOY_REGISTRATION</string>
+    <key>HARBOR_WATCH_PATHS</key>
+    <string>/path/to/watched/file</string>
+    <key>HARBOR_POLL_SECONDS</key>
+    <string>60</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/haven-harbor.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/haven-harbor.err.log</string>
+</dict>
+</plist>
