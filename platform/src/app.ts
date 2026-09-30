@@ -15,7 +15,7 @@ import {
 } from "./permissions.ts"
 import type { AccessRequest, ActionPolicyDocument, Guardrail, HumanRole, KeyMeta, RiskTier } from "./types.ts"
 
-export const VERSION = "0.3.0"
+export const VERSION = "0.4.0"
 const TIERS = new Set(["low", "medium", "high", "critical"])
 const ROLES = new Set(["superadmin", "admin", "user"])
 const BUOY_KINDS = new Set(["harbor", "custom"])
