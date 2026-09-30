@@ -15,7 +15,7 @@ import {
 } from "./permissions.ts"
 import type { AccessRequest, ActionPolicyDocument, Guardrail, HumanRole, KeyMeta, RiskTier } from "./types.ts"
 
-export const VERSION = "0.4.1"
+export const VERSION = "0.4.2"
 const TIERS = new Set(["low", "medium", "high", "critical"])
 const ROLES = new Set(["superadmin", "admin", "user"])
 const BUOY_KINDS = new Set(["harbor", "custom"])
@@ -1191,6 +1191,26 @@ export function createApp(haven: Haven) {
         const revoked = haven.revokeAgentCredential(existing.id, agentCredentialRevoke[2], gate.actor.username)
         if (!revoked) return err(404, "not_found", "credential not found")
         return json(revoked)
+      }
+
+      const agentCredentialDelete = path.match(/^\/v1\/agents\/([^/]+)\/credentials\/([^/]+)\/delete$/)
+      if (method === "POST" && agentCredentialDelete) {
+        const body = await readBody(req)
+        const org = String(body?.org || body?.org_slug || url.searchParams.get("org") || "").trim()
+        if (!org) return err(400, "invalid_body", "org required")
+        const gate = requirePermission(req, org, "agents.manage")
+        if ("error" in gate && gate.error) return gate.error
+        const existing = haven.getAgent(agentCredentialDelete[1])
+        if (!existing || existing.org_id !== gate.org.id) return err(404, "not_found", "agent not found")
+        try {
+          const deleted = haven.deleteAgentCredential(existing.id, agentCredentialDelete[2], gate.actor.username)
+          if (!deleted) return err(404, "not_found", "credential not found")
+          return json({ deleted: true, id: agentCredentialDelete[2] })
+        } catch (e: any) {
+          if (String(e.message || e) === "credential_active")
+            return err(409, "credential_active", "revoke the key before deleting it")
+          throw e
+        }
       }
 
       if (method === "POST" && path === "/v1/tokens") {

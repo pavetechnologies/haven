@@ -507,3 +507,84 @@ describe("agent credential admin routes (ISC-7)", () => {
     expect(res.status).toBe(401)
   })
 })
+
+describe("deleting revoked agent keys", () => {
+  function post(path: string, cookie: string, body: Record<string, unknown> = { org: "demo" }) {
+    return new Request(`http://127.0.0.1${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify(body),
+    })
+  }
+
+  test("a revoked key can be deleted; it disappears from the list and the ledger records it", async () => {
+    const { handle, cookie } = await setup()
+    const created = await handle(post("/v1/agents", cookie, { org: "demo", name: "tidy", owner: "root", purpose: "p" }))
+    const a = await created.json()
+    const base = `/v1/agents/${a.id}/credentials/${a.credential.id}`
+
+    expect((await handle(post(`${base}/revoke`, cookie))).status).toBe(200)
+    const del = await handle(post(`${base}/delete`, cookie))
+    expect(del.status).toBe(200)
+    expect((await del.json()).deleted).toBe(true)
+
+    const list = await handle(
+      new Request(`http://127.0.0.1/v1/agents/${a.id}/credentials?org=demo`, { headers: { cookie } }),
+    )
+    expect((await list.json()).credentials).toEqual([])
+
+    const ledger = await (
+      await handle(new Request("http://127.0.0.1/v1/ledger?org=demo&limit=500", { headers: { cookie } }))
+    ).text()
+    expect(ledger).toContain("agent.credential.deleted")
+    expect(ledger).not.toContain(a.credential.token)
+
+    expect((await handle(post(`${base}/delete`, cookie))).status).toBe(404)
+  })
+
+  test("an active key cannot be deleted (409) and keeps working", async () => {
+    const { handle, cookie } = await setup()
+    const a = await (
+      await handle(post("/v1/agents", cookie, { org: "demo", name: "live", owner: "root", purpose: "p" }))
+    ).json()
+    const del = await handle(post(`/v1/agents/${a.id}/credentials/${a.credential.id}/delete`, cookie))
+    expect(del.status).toBe(409)
+    expect((await del.json()).error).toBe("credential_active")
+    const list = await handle(
+      new Request(`http://127.0.0.1/v1/agents/${a.id}/credentials?org=demo`, { headers: { cookie } }),
+    )
+    expect((await list.json()).credentials[0].status).toBe("active")
+  })
+
+  test("delete is org-scoped, agent-scoped, and requires a session", async () => {
+    const { haven, handle, cookie } = await setup()
+    const a = await (
+      await handle(post("/v1/agents", cookie, { org: "demo", name: "mine", owner: "root", purpose: "p" }))
+    ).json()
+    const b = await (
+      await handle(post("/v1/agents", cookie, { org: "demo", name: "other", owner: "root", purpose: "p" }))
+    ).json()
+    haven.revokeAgentCredential(a.id, a.credential.id, "root")
+
+    expect((await handle(post(`/v1/agents/${b.id}/credentials/${a.credential.id}/delete`, cookie))).status).toBe(404)
+    const anon = await handle(
+      new Request(`http://127.0.0.1/v1/agents/${a.id}/credentials/${a.credential.id}/delete`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ org: "demo" }),
+      }),
+    )
+    expect(anon.status).toBe(401)
+    expect(haven.listAgentCredentials(a.id).length).toBe(1)
+  })
+
+  test("keys revoked by revoking the agent can be deleted too", async () => {
+    const { haven, handle, cookie } = await setup()
+    const a = await (
+      await handle(post("/v1/agents", cookie, { org: "demo", name: "gone", owner: "root", purpose: "p" }))
+    ).json()
+    haven.revokeAgent(a.id)
+    expect((await handle(post(`/v1/agents/${a.id}/credentials/${a.credential.id}/delete`, cookie))).status).toBe(200)
+    expect(haven.listAgentCredentials(a.id)).toEqual([])
+  })
+})

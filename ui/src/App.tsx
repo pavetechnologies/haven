@@ -1748,6 +1748,19 @@ function Agents({ org }: { org: string }) {
     }
   }
 
+  async function deleteKey(agentId: string, credentialId: string) {
+    setError("")
+    try {
+      await api(`/v1/agents/${agentId}/credentials/${credentialId}/delete`, {
+        method: "POST",
+        body: JSON.stringify({ org }),
+      })
+      await loadCredentials(agentId)
+    } catch (err: any) {
+      setError(err.message)
+    }
+  }
+
   return (
     <section>
       <h2>Agents</h2>
@@ -1804,7 +1817,9 @@ function Agents({ org }: { org: string }) {
                               <td>
                                 {c.status === "active" ? (
                                   <button className="danger" type="button" onClick={() => revokeKey(a.id, c.id)}>Revoke</button>
-                                ) : null}
+                                ) : (
+                                  <button className="secondary" type="button" onClick={() => deleteKey(a.id, c.id)}>Delete</button>
+                                )}
                               </td>
                             </tr>
                           ))}

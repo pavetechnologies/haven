@@ -2,6 +2,12 @@
 
 All notable changes to Haven are documented here.
 
+## 0.4.2 — 2026-09-30
+
+### Added
+
+- **Delete revoked agent keys.** `POST /v1/agents/:id/credentials/:credential_id/delete` removes a revoked key so key lists don't fill up with dead entries. Active keys return `409 credential_active` — revoke first. Each delete writes an `agent.credential.deleted` ledger event (key prefix only), so the audit trail survives. The Agents screen shows a **Delete** button on revoked keys.
+
 ## 0.4.1 — 2026-09-29
 
 ### Fixed

@@ -93,7 +93,7 @@ curl -fsS -b /tmp/haven.jar -X POST http://127.0.0.1:19090/v1/agents/<agent-id>/
   -H "Content-Type: application/json" -d '{"org":"<slug>"}'
 ```
 
-The response carries the key once; hand it to the agent's secret store and do not log it. Only the SHA-256 hash is stored. Rotate by issuing a new key, deploying it, then revoking the old one with `POST /v1/agents/:id/credentials/:cid/revoke`. `GET /v1/agents/:id/credentials?org=<slug>` lists prefixes, status, and last use. Revoking an agent revokes all of its keys and tokens. Agents created with `POST /v1/agents` (or UI **Agents → Create**) receive their first key in the create response.
+The response carries the key once; hand it to the agent's secret store and do not log it. Only the SHA-256 hash is stored. Rotate by issuing a new key, deploying it, then revoking the old one with `POST /v1/agents/:id/credentials/:cid/revoke`. `GET /v1/agents/:id/credentials?org=<slug>` lists prefixes, status, and last use. Revoking an agent revokes all of its keys and tokens. Revoked keys can be cleaned up with `POST /v1/agents/:id/credentials/:cid/delete` (the ledger keeps the history). Agents created with `POST /v1/agents` (or UI **Agents → Create**) receive their first key in the create response.
 
 Agents exist only when an operator registers them, so registration is the human-in-the-loop for identity; policy (allow / deny / approval) governs every knock, including an agent's first. The agent key is accepted only by `POST /v1/knock`.
 

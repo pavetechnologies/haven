@@ -100,6 +100,7 @@ const ROUTES: Array<[string, string]> = [
   ["GET", "/v1/agents/bogus/credentials?org=demo"],
   ["POST", "/v1/agents/bogus/credentials"],
   ["POST", "/v1/agents/bogus/credentials/bogus/revoke"],
+  ["POST", "/v1/agents/bogus/credentials/bogus/delete"],
   ["GET", "/v1/resources?org=demo"],
   ["POST", "/v1/resources/grant"],
   ["POST", "/v1/resources/revoke"],

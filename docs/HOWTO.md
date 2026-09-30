@@ -158,6 +158,7 @@ Only the hash is stored; Haven cannot show the key again. Manage keys per agent:
 | `POST /v1/agents/:id/credentials` | `agents.manage` | Issue a new key (rotation = issue new, then revoke old) |
 | `GET /v1/agents/:id/credentials?org=…` | `agents.read` | List keys (prefix, status, last used — never the key) |
 | `POST /v1/agents/:id/credentials/:cid/revoke` | `agents.manage` | Revoke one key |
+| `POST /v1/agents/:id/credentials/:cid/delete` | `agents.manage` | Delete a revoked key (409 if still active) |
 | `POST /v1/agents/:id/revoke` | `agents.manage` | Revoke the agent, all its keys and tokens |
 
 ### Knock

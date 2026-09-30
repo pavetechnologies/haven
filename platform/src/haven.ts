@@ -2086,6 +2086,23 @@ export async function createHaven(opts: HavenOpts) {
     return rowToAgentCredential(db.query(`SELECT * FROM agent_credentials WHERE id = ?`).get(credentialId))
   }
 
+  /** Removes a revoked credential's row. Active credentials must be revoked first. The ledger keeps the history. */
+  function deleteAgentCredential(agentId: string, credentialId: string, actor: string): boolean {
+    const row = db
+      .query(`SELECT * FROM agent_credentials WHERE id = ? AND agent_id = ?`)
+      .get(credentialId, agentId) as any
+    if (!row) return false
+    if (row.status === "active" && !row.revoked_at) throw new Error("credential_active")
+    db.query(`DELETE FROM agent_credentials WHERE id = ?`).run(credentialId)
+    ledgerAppend("agent.credential.deleted", {
+      agent_id: agentId,
+      actor,
+      outcome: "success",
+      detail: { credential_id: credentialId, token_prefix: row.token_prefix },
+    })
+    return true
+  }
+
   /** Authenticates an agent by its Haven-issued credential. Grants identity for knock only. */
   function authenticateAgent(req: Request): Agent | null {
     const auth = req.headers.get("authorization") || ""
@@ -3422,6 +3439,7 @@ export async function createHaven(opts: HavenOpts) {
     issueAgentCredential,
     listAgentCredentials,
     revokeAgentCredential,
+    deleteAgentCredential,
     authenticateAgent,
     mintToken,
     introspectToken,
