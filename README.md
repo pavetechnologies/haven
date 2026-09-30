@@ -51,8 +51,9 @@ curl -fsS http://127.0.0.1:19090/health
 
 ### Run with Docker
 
+The image builds the operator UI itself; no separate UI build step.
+
 ```bash
-cd ui && bun install && bun run build && cd ..
 docker build -t haven:local .
 docker run --rm -p 19090:19090 \
   -e HAVEN_TOKEN_SECRET -e HAVEN_ROOT_ENCRYPTION_KEY -e HAVEN_CANARY_PEPPER \

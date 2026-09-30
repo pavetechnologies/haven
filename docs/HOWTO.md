@@ -70,7 +70,7 @@ curl -fsS http://127.0.0.1:19090/health
 
 ### Option B — Docker (repo root)
 
-Build the UI first (`cd ui && bun run build`), then:
+The image builds the operator UI itself (multi-stage), so no separate UI build is needed:
 
 ```bash
 docker build -t haven:local .

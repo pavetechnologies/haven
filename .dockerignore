@@ -1,0 +1,8 @@
+**/node_modules
+ui/dist
+platform/data
+**/.env
+*.db
+.git
+.worktrees
+graphify-out

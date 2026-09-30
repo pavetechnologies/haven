@@ -2,6 +2,12 @@
 
 All notable changes to Haven are documented here.
 
+## 0.4.1 — 2026-09-29
+
+### Fixed
+
+- **Docker image shipped a stale operator UI.** The root `Dockerfile` copied a prebuilt `ui/dist` from the build context; because `ui/dist` is gitignored, an image could silently bundle an older UI than its platform code (e.g. 0.4.0's agent-key screens missing). The Dockerfile is now multi-stage and builds the UI from source, and `.dockerignore` excludes any local `ui/dist`.
+
 ## 0.4.0 — 2026-09-29
 
 ### Security
