@@ -5,7 +5,10 @@ BASE="${BASE:-http://127.0.0.1:19090}"
 USER="${HAVEN_BOOTSTRAP_USER:?set HAVEN_BOOTSTRAP_USER}"
 PASS="${HAVEN_BOOTSTRAP_PASSWORD:?set HAVEN_BOOTSTRAP_PASSWORD}"
 JAR="$(mktemp)"
-trap 'rm -f "$JAR"' EXIT
+# Agent key (haven_agk_…) lives only in this 0600 header file; it is never printed.
+AGENT_HDR="$(mktemp)"
+chmod 600 "$AGENT_HDR"
+trap 'rm -f "$JAR" "$AGENT_HDR"' EXIT
 
 echo "== health =="
 curl -fsS "$BASE/health" | tee /tmp/haven-health.json
@@ -47,6 +50,7 @@ for a in d.get("agents") or []:
         print(a["id"]); raise SystemExit
 print("")
 ')
+AGENT_CRED_ID=""
 if [[ -z "$AID" ]]; then
   AGENT=$(curl -fsS -X POST "$BASE/v1/agents" "${H[@]}" -d '{
     "org": "demo",
@@ -57,12 +61,41 @@ if [[ -z "$AID" ]]; then
     "scopes": ["secrets:read"]
   }')
   AID=$(echo "$AGENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+  # The first agent key is returned once, on create.
+  AGENT_CRED_ID=$(echo "$AGENT" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+c = d.get("credential") or d
+assert c["token"].startswith("haven_agk_"), "unexpected agent key format"
+open(sys.argv[1], "w").write("Authorization: Bearer " + c["token"] + "\n")
+print(c["id"])
+' "$AGENT_HDR")
 fi
 echo "agent $AID"
 
-echo "== knock =="
-KNOCK=$(curl -fsS -X POST "$BASE/v1/knock" -H "Content-Type: application/json" \
+echo "== agent key =="
+# Knock requires a Haven agent key. Existing agent: issue a fresh key for this run (revoked at the end).
+if [[ -z "$AGENT_CRED_ID" ]]; then
+  AGENT_CRED_ID=$(curl -fsS -X POST "$BASE/v1/agents/$AID/credentials" "${H[@]}" -d '{"org":"demo"}' | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+c = d.get("credential") or d
+assert c["token"].startswith("haven_agk_"), "unexpected agent key format"
+open(sys.argv[1], "w").write("Authorization: Bearer " + c["token"] + "\n")
+print(c["id"])
+' "$AGENT_HDR")
+fi
+echo "agent key $AGENT_CRED_ID issued (value not shown)"
+
+echo "== knock without key is rejected =="
+NOKEY_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE/v1/knock" -H "Content-Type: application/json" \
   -d "{\"org\":\"demo\",\"project\":\"default\",\"agent_name\":\"haven-smoke\",\"purpose\":\"smoke\",\"need\":[{\"action\":\"secrets:read\",\"key_ref\":\"$REF\"}]}")
+[[ "$NOKEY_STATUS" == "401" ]] || { echo "expected 401 for unauthenticated knock, got $NOKEY_STATUS"; exit 1; }
+echo "unauthenticated knock -> 401"
+
+echo "== knock =="
+KNOCK=$(curl -sS -X POST "$BASE/v1/knock" -H "Content-Type: application/json" -H @"$AGENT_HDR" \
+  -d "{\"org\":\"demo\",\"project\":\"default\",\"purpose\":\"smoke\",\"need\":[{\"action\":\"secrets:read\",\"key_ref\":\"$REF\"}]}")
 echo "$KNOCK" | python3 -c 'import json,sys; d=json.load(sys.stdin); print({k:d[k] for k in d if k!="token"}); assert d.get("status")=="auto_allow", d'
 TOKEN=$(echo "$KNOCK" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
 
@@ -84,14 +117,17 @@ assert body.get("value") == expect, "value mismatch"
 print("resolve ok decision", body.get("decision_id"))
 PY
 
-curl -fsS "$BASE/v1/ledger?org=demo&limit=20" "${H[@]}" | python3 -c '
+export AGENT_HDR
+curl -fsS "$BASE/v1/ledger?org=demo&limit=50" "${H[@]}" | python3 -c '
 import json, os, sys
 raw = sys.stdin.read()
 assert os.environ["SMOKE_VAL"] not in raw, "secret value leaked into ledger"
+agent_key = open(os.environ["AGENT_HDR"]).read().strip().split()[-1]
+assert agent_key not in raw, "agent key leaked into ledger"
 d = json.loads(raw)
 types = [e.get("type") for e in d.get("events", [])]
 assert "secret.resolve" in types, types
-print("ledger clean of secret value; saw secret.resolve")
+print("ledger clean of secret value and agent key; saw secret.resolve")
 '
 
 echo "== buoy register =="
@@ -150,6 +186,13 @@ d = json.load(sys.stdin)
 assert any(r.get("id") == os.environ["REMEDIATION_ID"] for r in d.get("remediations", [])), d
 print("sighting opened queue remediation", os.environ["REMEDIATION_ID"])
 '
+
+echo "== revoke smoke agent key =="
+curl -fsS -X POST "$BASE/v1/agents/$AID/credentials/$AGENT_CRED_ID/revoke" "${H[@]}" -d '{"org":"demo"}' \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["status"]=="revoked", d; print("revoked", d["id"])'
+REVOKED_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE/v1/knock" -H "Content-Type: application/json" -H @"$AGENT_HDR" -d '{}')
+[[ "$REVOKED_STATUS" == "401" ]] || { echo "expected 401 for revoked agent key, got $REVOKED_STATUS"; exit 1; }
+echo "revoked agent key -> 401"
 
 echo
 echo "HAVEN_SMOKE_OK ref=$REF"

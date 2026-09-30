@@ -364,12 +364,16 @@ export function createApp(haven: Haven) {
       }
 
       if (method === "POST" && path === "/v1/knock") {
+        // Authenticate the agent before touching the body or any state: no credential, no knock.
+        const agent = haven.authenticateAgent(req)
+        if (!agent) return err(401, "agent_credential_required", "a valid Haven agent credential is required")
         const body = await readBody(req)
         try {
           const result = haven.knock({
             org: String(body?.org || ""),
             project: String(body?.project || ""),
-            agent_name: String(body?.agent_name || ""),
+            agent_id: agent.id,
+            agent_name: body?.agent_name === undefined ? undefined : String(body.agent_name),
             purpose: String(body?.purpose || ""),
             need: Array.isArray(body?.need) ? body.need : [],
             ttl_seconds: body?.ttl_seconds ? Number(body.ttl_seconds) : undefined,
@@ -379,10 +383,13 @@ export function createApp(haven: Haven) {
         } catch (e: any) {
           const msg = String(e.message || e)
           if (msg === "org_not_found" || msg === "project_not_found") return err(404, msg, msg)
-          if (msg === "invalid_knock") return err(400, "invalid_body", "org, project, agent_name, purpose, need required")
+          if (msg === "invalid_knock") return err(400, "invalid_body", "org, project, purpose, need required")
           if (msg === "agent_scope_mismatch" || msg === "resource_scope_mismatch") {
             return err(403, "forbidden", msg)
           }
+          if (msg === "agent_identity_mismatch") return err(403, msg, "agent_name does not match the credential")
+          if (msg === "agent_revoked") return err(403, msg, msg)
+          if (msg === "agent_not_found") return err(401, "agent_credential_required", msg)
           throw e
         }
       }
@@ -1099,7 +1106,19 @@ export function createApp(haven: Haven) {
             risk_tier: risk,
             scopes,
           })
-          return json(agent, 201)
+          const issued = haven.issueAgentCredential(agent.id, gate.actor.username)
+          return json(
+            {
+              ...agent,
+              credential: {
+                id: issued.id,
+                token: issued.token,
+                token_prefix: issued.token_prefix,
+                created_at: issued.created_at,
+              },
+            },
+            201,
+          )
         } catch (e: any) {
           if (String(e).includes("UNIQUE")) return err(409, "name_taken", "agent name already exists")
           throw e
@@ -1137,6 +1156,41 @@ export function createApp(haven: Haven) {
         const a = haven.revokeAgent(revokeMatch[1])
         if (!a) return err(404, "not_found", "agent not found")
         return json(a)
+      }
+
+      const agentCredentials = path.match(/^\/v1\/agents\/([^/]+)\/credentials$/)
+      if (agentCredentials && (method === "POST" || method === "GET")) {
+        const body = method === "POST" ? await readBody(req) : null
+        const org = String(body?.org || body?.org_slug || url.searchParams.get("org") || "").trim()
+        if (!org) return err(400, method === "POST" ? "invalid_body" : "invalid_query", "org required")
+        const gate = requirePermission(req, org, method === "POST" ? "agents.manage" : "agents.read")
+        if ("error" in gate && gate.error) return gate.error
+        const existing = haven.getAgent(agentCredentials[1])
+        if (!existing || existing.org_id !== gate.org.id) return err(404, "not_found", "agent not found")
+        if (method === "GET") return json({ credentials: haven.listAgentCredentials(existing.id) })
+        try {
+          const issued = haven.issueAgentCredential(existing.id, gate.actor.username)
+          return json(issued, 201)
+        } catch (e: any) {
+          const msg = String(e.message || e)
+          if (msg === "agent_revoked") return err(409, msg, "agent is revoked")
+          if (msg === "agent_not_found") return err(404, "not_found", msg)
+          throw e
+        }
+      }
+
+      const agentCredentialRevoke = path.match(/^\/v1\/agents\/([^/]+)\/credentials\/([^/]+)\/revoke$/)
+      if (method === "POST" && agentCredentialRevoke) {
+        const body = await readBody(req)
+        const org = String(body?.org || body?.org_slug || url.searchParams.get("org") || "").trim()
+        if (!org) return err(400, "invalid_body", "org required")
+        const gate = requirePermission(req, org, "agents.manage")
+        if ("error" in gate && gate.error) return gate.error
+        const existing = haven.getAgent(agentCredentialRevoke[1])
+        if (!existing || existing.org_id !== gate.org.id) return err(404, "not_found", "agent not found")
+        const revoked = haven.revokeAgentCredential(existing.id, agentCredentialRevoke[2], gate.actor.username)
+        if (!revoked) return err(404, "not_found", "credential not found")
+        return json(revoked)
       }
 
       if (method === "POST" && path === "/v1/tokens") {

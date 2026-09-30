@@ -974,7 +974,7 @@ describe("secrets and knock HTTP", () => {
     expect(haven.readKeyValue(put.ref)).toBe("still-present")
   })
 
-  test("knock auto-allow then resolve", async () => {
+  test("credentialed knock auto-allow then resolve", async () => {
     const { handle, haven } = await app()
     haven.putKey({ org: "demo", project: "default", env: "dev", name: "PING", value: "dock" })
     haven.setOrgGuardrail("demo", {
@@ -985,11 +985,12 @@ describe("secrets and knock HTTP", () => {
       require_approval: false,
       on_exposure: "queue",
     })
-    haven.createAgent({ name: "pilot", owner: "admin", purpose: "read", risk_tier: "low", scopes: ["secrets:read"] })
-    const knocked = await handle(
+    const pilot = haven.createAgent({ name: "pilot", owner: "admin", purpose: "read", risk_tier: "low", scopes: ["secrets:read"] })
+    const credential = haven.issueAgentCredential(pilot.id, "root")
+    const knockRequest = () =>
       new Request("http://127.0.0.1/v1/knock", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", authorization: `Bearer ${credential.token}` },
         body: JSON.stringify({
           org: "demo",
           project: "default",
@@ -997,8 +998,8 @@ describe("secrets and knock HTTP", () => {
           purpose: "read ping",
           need: [{ action: "secrets:read", key_ref: "haven://demo/default/dev/PING" }],
         }),
-      }),
-    )
+      })
+    const knocked = await handle(knockRequest())
     expect(knocked.status).toBe(200)
     const k = await knocked.json()
     expect(k.status).toBe("auto_allow")
@@ -1196,10 +1197,17 @@ describe("org-scoped operator routes", () => {
       require_approval: true,
       on_exposure: "queue",
     })
+    const pendingAgent = haven.createAgent({
+      name: "pending-agent",
+      owner: "admin",
+      purpose: "request access",
+      risk_tier: "low",
+      scopes: ["secrets:read"],
+    })
     const knock = haven.knock({
       org: "demo",
       project: "default",
-      agent_name: "pending-agent",
+      agent_id: pendingAgent.id,
       purpose: "request access",
       need: [{ action: "secrets:read", key_ref: "haven://demo/default/dev/PING" }],
     })
@@ -1237,7 +1245,7 @@ describe("org-scoped operator routes", () => {
       haven.getOrgPolicy("demo").version,
       "test",
     )
-    haven.createAgent({
+    const elevatedAgent = haven.createAgent({
       name: "elevated-agent",
       owner: "admin",
       purpose: "elevated request",
@@ -1274,7 +1282,7 @@ describe("org-scoped operator routes", () => {
     const knock = haven.knock({
       org: "demo",
       project: "default",
-      agent_name: "elevated-agent",
+      agent_id: elevatedAgent.id,
       purpose: "elevated access",
       need: [{ action: "secrets:read", scope: "haven://demo/default/dev/" }],
     })

@@ -110,7 +110,7 @@ Sidebar (nautical chrome: **Clearance · Berth · Logbook**):
 | **Approvals** | Clearance inbox — approve / deny / escalate access requests and knocks |
 | **Policy** | Action policy at org / project / key scope (defaults + minimums; versioned) |
 | **Buoys** | Register Harbor (or other) buoys; plant canaries; watch remediations |
-| **Agents** | Register agent identities; revoke when done |
+| **Agents** | Register agent identities; issue / rotate / revoke agent keys (shown once); revoke agents when done |
 | **Logbook** | Org-scoped ledger events (no secret values) |
 | **Administration** | Members, assignments, API keys, org settings |
 
@@ -133,27 +133,52 @@ Sidebar (nautical chrome: **Clearance · Berth · Logbook**):
 
 ## 4. Agent integration (knock → resolve)
 
-Agents never store long-lived provider keys. Flow:
+Agents never store long-lived provider keys. They hold one **agent key** (`haven_agk_…`) that proves identity and grants knock access only. Flow:
 
 ```text
-register agent  →  POST /v1/knock  →  short-lived haven_… token  →  POST /v1/secrets/resolve
+admin registers agent → agent key (shown once) → POST /v1/knock (Bearer agent key)
+  → policy / human approval → short-lived haven_… token → POST /v1/secrets/resolve
 ```
+
+### Register the agent and get its key
+
+UI **Agents → Create** shows the key once. Or via API with an operator session:
+
+```bash
+curl -fsS -b jar -X POST http://127.0.0.1:19090/v1/agents \
+  -H 'content-type: application/json' \
+  -d '{"org":"demo","name":"my-agent","owner":"root","purpose":"draft email","risk_tier":"low"}'
+# → { ...agent, "credential": { "id": "agc_…", "token": "haven_agk_…", "token_prefix": "…", "created_at": "…" } }
+```
+
+Only the hash is stored; Haven cannot show the key again. Manage keys per agent:
+
+| Route | Permission | Purpose |
+|-------|------------|---------|
+| `POST /v1/agents/:id/credentials` | `agents.manage` | Issue a new key (rotation = issue new, then revoke old) |
+| `GET /v1/agents/:id/credentials?org=…` | `agents.read` | List keys (prefix, status, last used — never the key) |
+| `POST /v1/agents/:id/credentials/:cid/revoke` | `agents.manage` | Revoke one key |
+| `POST /v1/agents/:id/revoke` | `agents.manage` | Revoke the agent, all its keys and tokens |
 
 ### Knock
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:19090/v1/knock \
   -H 'content-type: application/json' \
+  -H "Authorization: Bearer $HAVEN_AGENT_KEY" \
   -d '{
     "org": "demo",
     "project": "default",
-    "agent_name": "my-agent",
     "purpose": "draft email",
     "need": [{"action": "secrets:read", "key_ref": "haven://demo/default/dev/OPENAI_API_KEY"}]
   }'
 ```
 
-Outcomes: `auto_allow` / `auto_deny` / queued for human approval (`approve` guardrail or action policy).
+`X-Haven-Agent-Key: haven_agk_…` works too. Identity comes from the key; `agent_name` in the body is optional and must match the key's agent (else `403 agent_identity_mismatch`).
+
+Agents exist only when an admin registers them; policy (allow / deny / approval) governs every knock. Outcomes: `auto_allow` / `auto_deny` / queued for human approval (`approve` guardrail or action policy). No, invalid, or revoked key → `401 agent_credential_required`, with nothing written.
+
+The agent key is rejected everywhere else (resolve, authorize, introspect, activity, operator routes).
 
 ### Resolve (fail closed)
 

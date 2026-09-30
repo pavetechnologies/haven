@@ -21,7 +21,7 @@ bash $HAVEN_ROOT/platform/scripts/smoke.sh
 
 ## Notes
 
-- Login is username/password. Agents knock (`POST /v1/knock`).
+- Login is username/password. Agents knock (`POST /v1/knock`) with an admin-issued agent key (`Authorization: Bearer haven_agk_…`); no key → `401`, and knock never self-registers agents.
 - Scoped grants and denies compose organization → project → key; explicit deny wins.
 - Agent secret **value** path: fail closed without a knock grant.
 - Do not expose `:19090` to the public internet.

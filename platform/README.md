@@ -12,6 +12,8 @@ export HAVEN_DATA_DIR=./data
 bun run start
 ```
 
-Login is username/password (argon2id). Agents `POST /v1/knock`. Refs: `haven://org/project/env/name`.
+Login is username/password (argon2id). Agents `POST /v1/knock` with their agent key (`Authorization: Bearer haven_agk_…`, issued by an admin via `POST /v1/agents` or `POST /v1/agents/:id/credentials`; shown once, hash-only at rest). No key → `401`. Refs: `haven://org/project/env/name`.
+
+Agent keys: `haven_agk_…` for `/v1/knock` only.
 
 Activity keys: `haven_ak_…` for `/v1/activity` only.

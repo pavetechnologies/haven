@@ -82,6 +82,23 @@ Read and write routes are `GET|PUT /v1/orgs/:org/policy`, `GET|PUT /v1/orgs/:org
 
 Only `superadmin` members can reveal or delete a key value. Reveal is a one-time UI action (`POST /v1/secrets/reveal`) and records `secret.reveal` in the ledger without the value. Delete (`POST /v1/secrets/delete`) requires typing the exact key name, permanently removes the key, and records `secret.delete`; it cannot be restored in v1.
 
+### Agent credentials (breaking change)
+
+`POST /v1/knock` now requires an agent key (`Authorization: Bearer haven_agk_…` or `X-Haven-Agent-Key`). Unauthenticated knocks return `401 agent_credential_required` and write nothing: no knock, agent, access-request, or ledger row. Knock no longer self-registers unknown agents, and `agent_name` in the body is only checked against the key's agent.
+
+**Upgrade step:** agents registered before this change have no key and cannot knock until an operator issues one:
+
+```bash
+curl -fsS -b /tmp/haven.jar -X POST http://127.0.0.1:19090/v1/agents/<agent-id>/credentials \
+  -H "Content-Type: application/json" -d '{"org":"<slug>"}'
+```
+
+The response carries the key once; hand it to the agent's secret store and do not log it. Only the SHA-256 hash is stored. Rotate by issuing a new key, deploying it, then revoking the old one with `POST /v1/agents/:id/credentials/:cid/revoke`. `GET /v1/agents/:id/credentials?org=<slug>` lists prefixes, status, and last use. Revoking an agent revokes all of its keys and tokens. Agents created with `POST /v1/agents` (or UI **Agents → Create**) receive their first key in the create response.
+
+Agents exist only when an operator registers them, so registration is the human-in-the-loop for identity; policy (allow / deny / approval) governs every knock, including an agent's first. The agent key is accepted only by `POST /v1/knock`.
+
+Agents that self-registered via knock before this change have owner `knock` and no key: review them in **Agents** (or `GET /v1/agents?org=<slug>`) and revoke any you don't recognize.
+
 ### Ledger integrity
 
 Ledger events are hash-chained with SHA-256 using each event's `prev_hash` and a canonical JSON hash of the existing event fields. An operator with org-scoped `audit.read` can verify the complete ledger file with `GET /v1/ledger/verify?org=<slug>`; `valid: false` reports the first broken line without returning event contents.

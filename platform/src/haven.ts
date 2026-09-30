@@ -83,6 +83,7 @@ const SESSION_TTL = 8 * 3600
 const TOKEN_PREFIX = "haven_"
 const API_KEY_PREFIX = "haven_ak_"
 const BUOY_TOKEN_PREFIX = "haven_buoy_"
+export const AGENT_KEY_PREFIX = "haven_agk_"
 const BUOY_KINDS = new Set(["harbor", "custom"])
 const WATCH_AUDIENCES = new Set(["harbor", "custom", "all"])
 
@@ -106,6 +107,17 @@ export type ApiKeyRecord = {
   status: "active" | "revoked"
   created_at: string
   revoked_at: string | null
+}
+
+/** Agent credential metadata. Never carries the raw credential or its hash. */
+export type AgentCredentialRecord = {
+  id: string
+  agent_id: string
+  token_prefix: string
+  status: "active" | "revoked"
+  created_at: string
+  revoked_at: string | null
+  last_used_at: string | null
 }
 
 export type Buoy = {
@@ -168,7 +180,10 @@ export type SightingPayload = {
 export type KnockInput = {
   org: string
   project: string
-  agent_name: string
+  /** The authenticated agent (from its Haven-issued credential). Identity is never taken from the body. */
+  agent_id: string
+  /** Optional, informational only; must match the authenticated agent's name if provided. */
+  agent_name?: string
   purpose: string
   need: KnockNeed[]
   ttl_seconds?: number
@@ -452,6 +467,17 @@ export async function createHaven(opts: HavenOpts) {
       revoked_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(token_hash);
+    CREATE TABLE IF NOT EXISTS agent_credentials (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL REFERENCES agents(id),
+      token_hash TEXT NOT NULL UNIQUE,
+      token_prefix TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      revoked_at TEXT,
+      last_used_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_credentials_hash ON agent_credentials(token_hash);
     CREATE TABLE IF NOT EXISTS buoys (
       id TEXT PRIMARY KEY,
       org_id TEXT NOT NULL,
@@ -1995,8 +2021,83 @@ export async function createHaven(opts: HavenOpts) {
     const ts = now()
     db.query(`UPDATE agents SET status='revoked', revoked_at=?, updated_at=? WHERE id=?`).run(ts, ts, agentId)
     db.query(`UPDATE tokens SET revoked_at=? WHERE agent_id=? AND revoked_at IS NULL`).run(ts, agentId)
+    db.query(
+      `UPDATE agent_credentials SET status='revoked', revoked_at=? WHERE agent_id=? AND revoked_at IS NULL`,
+    ).run(ts, agentId)
     ledgerAppend("agent.revoked", { agent_id: agentId, outcome: "success" })
     return getAgent(agentId)
+  }
+
+  function rowToAgentCredential(r: any): AgentCredentialRecord {
+    return {
+      id: r.id,
+      agent_id: r.agent_id,
+      token_prefix: r.token_prefix,
+      status: r.status,
+      created_at: r.created_at,
+      revoked_at: r.revoked_at ?? null,
+      last_used_at: r.last_used_at ?? null,
+    }
+  }
+
+  function issueAgentCredential(agentId: string, actor: string) {
+    const agent = getAgent(agentId)
+    if (!agent) throw new Error("agent_not_found")
+    if (agent.status !== "active") throw new Error("agent_revoked")
+    const credId = id("agc")
+    const raw = `${AGENT_KEY_PREFIX}${randomBytes(32).toString("hex")}`
+    const token_prefix = `${raw.slice(0, 18)}…`
+    const created_at = now()
+    db.query(
+      `INSERT INTO agent_credentials (id, agent_id, token_hash, token_prefix, status, created_at, revoked_at, last_used_at)
+       VALUES (?, ?, ?, ?, 'active', ?, NULL, NULL)`,
+    ).run(credId, agent.id, hashToken(raw), token_prefix, created_at)
+    ledgerAppend("agent.credential.issued", {
+      agent_id: agent.id,
+      actor,
+      outcome: "success",
+      detail: { credential_id: credId, token_prefix },
+    })
+    return { id: credId, agent_id: agent.id, token: raw, token_prefix, created_at }
+  }
+
+  function listAgentCredentials(agentId: string): AgentCredentialRecord[] {
+    return db
+      .query(`SELECT * FROM agent_credentials WHERE agent_id = ? ORDER BY created_at DESC, id DESC`)
+      .all(agentId)
+      .map(rowToAgentCredential)
+  }
+
+  function revokeAgentCredential(agentId: string, credentialId: string, actor: string): AgentCredentialRecord | null {
+    const row = db
+      .query(`SELECT * FROM agent_credentials WHERE id = ? AND agent_id = ?`)
+      .get(credentialId, agentId) as any
+    if (!row) return null
+    if (!row.revoked_at) {
+      const ts = now()
+      db.query(`UPDATE agent_credentials SET status='revoked', revoked_at=? WHERE id=?`).run(ts, credentialId)
+      ledgerAppend("agent.credential.revoked", {
+        agent_id: agentId,
+        actor,
+        outcome: "success",
+        detail: { credential_id: credentialId, token_prefix: row.token_prefix },
+      })
+    }
+    return rowToAgentCredential(db.query(`SELECT * FROM agent_credentials WHERE id = ?`).get(credentialId))
+  }
+
+  /** Authenticates an agent by its Haven-issued credential. Grants identity for knock only. */
+  function authenticateAgent(req: Request): Agent | null {
+    const auth = req.headers.get("authorization") || ""
+    const m = /^Bearer\s+(\S+)$/i.exec(auth)
+    const raw = m ? m[1] : (req.headers.get("x-haven-agent-key") || "").trim()
+    if (!raw.startsWith(AGENT_KEY_PREFIX)) return null
+    const row = db.query(`SELECT * FROM agent_credentials WHERE token_hash = ?`).get(hashToken(raw)) as any
+    if (!row || row.status !== "active" || row.revoked_at) return null
+    const agent = getAgent(row.agent_id)
+    if (!agent || agent.status !== "active") return null
+    db.query(`UPDATE agent_credentials SET last_used_at=? WHERE id=?`).run(now(), row.id)
+    return agent
   }
 
   function resolveAgentRef(agentIdOrName: string): Agent | null {
@@ -2389,40 +2490,34 @@ export async function createHaven(opts: HavenOpts) {
     if (!org) throw new Error("org_not_found")
     const project = getProject(input.org, input.project)
     if (!project) throw new Error("project_not_found")
-    const agentName = input.agent_name.trim()
-    if (!agentName || !input.purpose || !input.need?.length) throw new Error("invalid_knock")
+    const agentId = String(input.agent_id || "").trim()
+    if (!agentId || !input.purpose || !input.need?.length) throw new Error("invalid_knock")
+    // Identity comes only from the authenticated credential; unknown agents never self-register.
+    let existing = getAgent(agentId)
+    if (!existing) throw new Error("agent_not_found")
+    if (existing.status !== "active") throw new Error("agent_revoked")
+    const claimedName = input.agent_name?.trim()
+    if (claimedName && claimedName !== existing.name) throw new Error("agent_identity_mismatch")
     if (!input.need.every((need) => knockNeedMatchesScope(input.org, input.project, need))) {
       throw new Error("resource_scope_mismatch")
     }
-    let existing = getAgentByName(agentName)
     if (
-      existing &&
-      ((existing.org_id && existing.org_id !== org.id) ||
-        (existing.project_id && existing.project_id !== project.id))
+      (existing.org_id && existing.org_id !== org.id) ||
+      (existing.project_id && existing.project_id !== project.id)
     ) {
       throw new Error("agent_scope_mismatch")
     }
-    if (existing && (!existing.org_id || !existing.project_id)) {
+    if (!existing.org_id || !existing.project_id) {
       db.query(`UPDATE agents SET org_id = ?, project_id = ?, updated_at = ? WHERE id = ?`).run(
         org.id,
         project.id,
         now(),
         existing.id,
       )
-      existing = getAgent(existing.id)
+      existing = getAgent(existing.id)!
     }
-    const firstTime = !existing
-    const agent =
-      existing ||
-      createAgent({
-        name: agentName,
-        owner: "knock",
-        purpose: input.purpose,
-        risk_tier: "medium",
-        scopes: ["secrets:read"],
-        org_id: org.id,
-        project_id: project.id,
-      })
+    const agent = existing
+    const agentName = agent.name
 
     const policyDecisions = input.need.map((need) =>
       evaluateNeedActionPolicy(input.org, input.project, agent, need))
@@ -2432,17 +2527,6 @@ export async function createHaven(opts: HavenOpts) {
       policyDecision = {
         outcome: "deny",
         reason: "exposure_blocked",
-        policy_version: policyDecision.policy_version,
-        snapshot: structuredClone(policyDecision.snapshot),
-      }
-    } else if (policyDecision.outcome === "auto_approve" && firstTime) {
-      policyDecision = {
-        outcome: "approval_required",
-        reason: "first_time_agent",
-        mode: "threshold",
-        tiers: ["normal"],
-        reason_required: false,
-        max_token_ttl_seconds: policyDecision.max_token_ttl_seconds,
         policy_version: policyDecision.policy_version,
         snapshot: structuredClone(policyDecision.snapshot),
       }
@@ -2499,14 +2583,14 @@ export async function createHaven(opts: HavenOpts) {
         purpose: input.purpose,
         need: input.need,
         status: "pending",
-        decision_reason: firstTime ? "first_time_agent" : "guardrail_approve",
+        decision_reason: "guardrail_approve",
         agent_id: agent.id,
       })
       ledgerAppend("knock.pending", {
         agent_id: agent.id,
         actor: agentName,
         outcome: "info",
-        detail: { knock_id: k.id, purpose: input.purpose, first_time: firstTime },
+        detail: { knock_id: k.id, purpose: input.purpose },
       })
       return { ...k }
     }
@@ -3335,6 +3419,10 @@ export async function createHaven(opts: HavenOpts) {
     getAgent,
     getAgentByName,
     revokeAgent,
+    issueAgentCredential,
+    listAgentCredentials,
+    revokeAgentCredential,
+    authenticateAgent,
     mintToken,
     introspectToken,
     revokeToken,

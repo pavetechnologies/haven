@@ -709,11 +709,11 @@ describe("guardrails and knock", () => {
 
   test("default deny auto-denies a known agent", async () => {
     const h = await openTestHaven()
-    h.createAgent({ name: "scout", owner: "root", purpose: "probe", risk_tier: "low", scopes: ["secrets:read"] })
+    const scout = h.createAgent({ name: "scout", owner: "root", purpose: "probe", risk_tier: "low", scopes: ["secrets:read"] })
     const result = h.knock({
       org: "demo",
       project: "default",
-      agent_name: "scout",
+      agent_id: scout.id,
       purpose: "read ping",
       need: [{ action: "secrets:read", key_ref: "haven://demo/default/dev/PING" }],
     })
@@ -732,11 +732,11 @@ describe("guardrails and knock", () => {
       require_approval: false,
       on_exposure: "queue",
     })
-    h.createAgent({ name: "pilot", owner: "root", purpose: "read", risk_tier: "low", scopes: ["secrets:read"] })
+    const pilot = h.createAgent({ name: "pilot", owner: "root", purpose: "read", risk_tier: "low", scopes: ["secrets:read"] })
     const result = h.knock({
       org: "demo",
       project: "default",
-      agent_name: "pilot",
+      agent_id: pilot.id,
       purpose: "read ping",
       need: [{ action: "secrets:read", key_ref: "haven://demo/default/dev/PING" }],
       ttl_seconds: 600,
@@ -783,7 +783,7 @@ describe("guardrails and knock", () => {
       h.knock({
         org: "other",
         project: "default",
-        agent_name: agent.name,
+        agent_id: agent.id,
         purpose: "cross tenant attack",
         need: [{ action: "secrets:read", key_ref: secret.ref }],
       }),
@@ -803,7 +803,13 @@ describe("guardrails and knock", () => {
       require_approval: false,
       on_exposure: "block",
     })
-    h.createAgent({ name: "blocked-pilot", owner: "root", purpose: "read", risk_tier: "low", scopes: ["secrets:read"] })
+    const blockedPilot = h.createAgent({
+      name: "blocked-pilot",
+      owner: "root",
+      purpose: "read",
+      risk_tier: "low",
+      scopes: ["secrets:read"],
+    })
     const canary = h.plantCanary({
       orgSlug: "demo",
       projectSlug: "default",
@@ -828,7 +834,7 @@ describe("guardrails and knock", () => {
     const result = h.knock({
       org: "demo",
       project: "default",
-      agent_name: "blocked-pilot",
+      agent_id: blockedPilot.id,
       purpose: "read blocked key",
       need: [{ action: "secrets:read", key_ref: ref }],
     })
@@ -839,7 +845,7 @@ describe("guardrails and knock", () => {
     expect(h.listResourceGrants().some((grant) => grant.resource === ref)).toBe(false)
   })
 
-  test("first-time agent is queued even when policy would allow", async () => {
+  test("unregistered agents cannot knock; a registered agent follows policy on its first knock", async () => {
     const h = await openTestHaven()
     h.setOrgGuardrail("demo", {
       default: "allow",
@@ -849,15 +855,31 @@ describe("guardrails and knock", () => {
       require_approval: false,
       on_exposure: "queue",
     })
+    const agentsBefore = h.listAgents().length
+    expect(() =>
+      h.knock({
+        org: "demo",
+        project: "default",
+        agent_id: "agt_stranger",
+        agent_name: "stranger",
+        purpose: "first contact",
+        need: [{ action: "secrets:read", scope: "haven://demo/default/dev/" }],
+      }),
+    ).toThrow(/agent_not_found/)
+    expect(h.getAgentByName("stranger")).toBeNull()
+    expect(h.listAgents().length).toBe(agentsBefore)
+    expect(h.listKnocks().length).toBe(0)
+
+    const stranger = h.createAgent({ name: "stranger", owner: "root", purpose: "p", risk_tier: "low", scopes: ["secrets:read"] })
     const result = h.knock({
       org: "demo",
       project: "default",
-      agent_name: "stranger",
+      agent_id: stranger.id,
       purpose: "first contact",
       need: [{ action: "secrets:read", scope: "haven://demo/default/dev/" }],
     })
-    expect(result.status).toBe("pending")
-    expect(result.token).toBeUndefined()
+    expect(result.status).toBe("auto_allow")
+    expect(result.token?.startsWith("haven_")).toBe(true)
   })
 
   test("human approve mints a token; deny is final", async () => {
@@ -871,10 +893,11 @@ describe("guardrails and knock", () => {
       require_approval: false,
       on_exposure: "queue",
     })
+    const newbie = h.createAgent({ name: "newbie", owner: "root", purpose: "p", risk_tier: "low", scopes: ["secrets:read"] })
     const queued = h.knock({
       org: "demo",
       project: "default",
-      agent_name: "newbie",
+      agent_id: newbie.id,
       purpose: "please",
       need: [{ action: "secrets:read", key_ref: "haven://demo/default/dev/PING" }],
     })
@@ -887,7 +910,7 @@ describe("guardrails and knock", () => {
     const queued2 = h.knock({
       org: "demo",
       project: "default",
-      agent_name: "newbie",
+      agent_id: newbie.id,
       purpose: "again",
       need: [{ action: "secrets:read", key_ref: "haven://demo/default/dev/PING" }],
     })

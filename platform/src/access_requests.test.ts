@@ -307,7 +307,7 @@ describe("access request workflow", () => {
     const knock = haven.knock({
       org: "demo",
       project: "default",
-      agent_name: "workflow-agent",
+      agent_id: haven.getAgentByName("workflow-agent")!.id,
       purpose: "read",
       need: [{ action: "secrets:read", scope: "haven://demo/default/dev/" }],
     })

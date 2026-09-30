@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { Fragment, useEffect, useState } from "react"
 import {
   ACCESS_SECTIONS,
   APPROVAL_INBOX_ACTIONS,
@@ -1643,11 +1643,24 @@ function PolicyWorkspace({ org, canOrg }: { org: string; canOrg: boolean }) {
   )
 }
 
+type AgentCredentialRow = {
+  id: string
+  agent_id: string
+  token_prefix: string
+  status: "active" | "revoked"
+  created_at: string
+  revoked_at: string | null
+  last_used_at: string | null
+}
+
 function Agents({ org }: { org: string }) {
   const [agents, setAgents] = useState<any[]>([])
   const [grants, setGrants] = useState<any[]>([])
   const [error, setError] = useState("")
   const [form, setForm] = useState({ name: "", owner: "root", purpose: "", scopes: "secrets:read" })
+  const [issued, setIssued] = useState<{ agent: string; token: string } | null>(null)
+  const [openKeys, setOpenKeys] = useState<string | null>(null)
+  const [credentials, setCredentials] = useState<AgentCredentialRow[]>([])
 
   async function load() {
     const query = `org=${encodeURIComponent(org)}`
@@ -1656,44 +1669,152 @@ function Agents({ org }: { org: string }) {
     setGrants(g.grants || [])
   }
   useEffect(() => { load().catch((e) => setError(e.message)) }, [org])
+  useEffect(() => { setOpenKeys(null); setIssued(null) }, [org])
+
+  async function loadCredentials(agentId: string) {
+    const data = await api(`/v1/agents/${agentId}/credentials?org=${encodeURIComponent(org)}`)
+    setCredentials(data.credentials || [])
+  }
 
   async function create(e: React.FormEvent) {
     e.preventDefault()
     setError("")
-    await api("/v1/agents", {
-      method: "POST",
-      body: JSON.stringify({
-        org,
-        name: form.name,
-        owner: form.owner,
-        purpose: form.purpose,
-        risk_tier: "medium",
-        scopes: form.scopes.split(",").map((s) => s.trim()).filter(Boolean),
-      }),
-    })
-    await load()
+    try {
+      const data = await api("/v1/agents", {
+        method: "POST",
+        body: JSON.stringify({
+          org,
+          name: form.name,
+          owner: form.owner,
+          purpose: form.purpose,
+          risk_tier: "medium",
+          scopes: form.scopes.split(",").map((s) => s.trim()).filter(Boolean),
+        }),
+      })
+      if (data.credential?.token) setIssued({ agent: data.name, token: data.credential.token })
+      setForm({ ...form, name: "", purpose: "" })
+      await load()
+    } catch (err: any) {
+      setError(err.message)
+    }
   }
 
   async function revoke(id: string) {
-    await api(`/v1/agents/${id}/revoke`, { method: "POST", body: JSON.stringify({ org }) })
-    await load()
+    setError("")
+    try {
+      await api(`/v1/agents/${id}/revoke`, { method: "POST", body: JSON.stringify({ org }) })
+      await load()
+      if (openKeys === id) await loadCredentials(id)
+    } catch (err: any) {
+      setError(err.message)
+    }
+  }
+
+  async function toggleKeys(id: string) {
+    setError("")
+    if (openKeys === id) {
+      setOpenKeys(null)
+      return
+    }
+    try {
+      await loadCredentials(id)
+      setOpenKeys(id)
+    } catch (err: any) {
+      setError(err.message)
+    }
+  }
+
+  async function issueKey(agent: { id: string; name: string }) {
+    setError("")
+    try {
+      const data = await api(`/v1/agents/${agent.id}/credentials`, { method: "POST", body: JSON.stringify({ org }) })
+      setIssued({ agent: agent.name, token: data.token })
+      if (openKeys === agent.id) await loadCredentials(agent.id)
+    } catch (err: any) {
+      setError(err.message)
+    }
+  }
+
+  async function revokeKey(agentId: string, credentialId: string) {
+    setError("")
+    try {
+      await api(`/v1/agents/${agentId}/credentials/${credentialId}/revoke`, {
+        method: "POST",
+        body: JSON.stringify({ org }),
+      })
+      await loadCredentials(agentId)
+    } catch (err: any) {
+      setError(err.message)
+    }
   }
 
   return (
     <section>
       <h2>Agents</h2>
-      <p className="muted">Agents knock for clearance. Standing mint is superadmin-only via API.</p>
+      <p className="muted">
+        Agents knock for clearance with their agent key (<span className="mono">haven_agk_…</span>). The key only
+        opens the door to ask; it never reads a secret. Standing mint is superadmin-only via API.
+      </p>
+      {issued ? (
+        <OneTimeValues
+          title={`Agent key for ${issued.agent} (shown once)`}
+          values={[["Agent key", issued.token]]}
+          onDismiss={() => setIssued(null)}
+        />
+      ) : null}
       {error ? <p className="error">{error}</p> : null}
       <table>
         <thead><tr><th>Name</th><th>Status</th><th>Scopes</th><th></th></tr></thead>
         <tbody>
           {agents.map((a) => (
-            <tr key={a.id}>
-              <td>{a.name} <span className="badge">{a.risk_tier}</span></td>
-              <td>{a.status}</td>
-              <td className="mono">{(a.scopes || []).join(", ")}</td>
-              <td><button className="danger" type="button" onClick={() => revoke(a.id)}>Revoke</button></td>
-            </tr>
+            <Fragment key={a.id}>
+              <tr>
+                <td>{a.name} <span className="badge">{a.risk_tier}</span></td>
+                <td>{a.status}</td>
+                <td className="mono">{(a.scopes || []).join(", ")}</td>
+                <td>
+                  <div className="row">
+                    <button className="secondary" type="button" onClick={() => toggleKeys(a.id)}>
+                      {openKeys === a.id ? "Hide keys" : "Keys"}
+                    </button>
+                    {a.status === "active" ? (
+                      <button className="secondary" type="button" onClick={() => issueKey(a)}>Issue key</button>
+                    ) : null}
+                    {a.status === "active" ? (
+                      <button className="danger" type="button" onClick={() => revoke(a.id)}>Revoke</button>
+                    ) : null}
+                  </div>
+                </td>
+              </tr>
+              {openKeys === a.id ? (
+                <tr>
+                  <td colSpan={4}>
+                    {credentials.length === 0 ? (
+                      <p className="muted">No agent keys. Issue one so this agent can knock.</p>
+                    ) : (
+                      <table>
+                        <thead><tr><th>Key</th><th>Status</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+                        <tbody>
+                          {credentials.map((c) => (
+                            <tr key={c.id}>
+                              <td className="mono">{c.token_prefix}</td>
+                              <td>{c.status}</td>
+                              <td className="mono">{c.created_at}</td>
+                              <td className="mono">{c.last_used_at || "never"}</td>
+                              <td>
+                                {c.status === "active" ? (
+                                  <button className="danger" type="button" onClick={() => revokeKey(a.id, c.id)}>Revoke</button>
+                                ) : null}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </td>
+                </tr>
+              ) : null}
+            </Fragment>
           ))}
         </tbody>
       </table>
