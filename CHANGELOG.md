@@ -2,6 +2,14 @@
 
 All notable changes to Haven are documented here.
 
+## 0.4.3 — 2026-09-30
+
+### Changed
+
+- **Policy denials explain themselves.** When policy blocks a person from revealing, updating, or deleting a key, the `403 policy_denied` response now carries a readable `message` naming the rule to add (for example: *No policy allows people to delete keys in org/project. Add a "keys.delete" default for actor "human" under Policy.*), plus machine-readable `reason` and `action` fields. Previously the message was the raw reason code (`no_matching_default`).
+- **Policy editor action picker.** The action field in policy defaults, minimums, and preview is now a dropdown of the known actions (`keys.resolve`, `keys.reveal`, `keys.update`, `keys.delete`) with plain-language labels. Unknown values already in a stored policy are preserved.
+- Stripped embedded generator metadata from brand PNGs (pixel data unchanged).
+
 ## 0.4.2 — 2026-09-30
 
 ### Added

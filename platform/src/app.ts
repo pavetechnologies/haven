@@ -15,7 +15,7 @@ import {
 } from "./permissions.ts"
 import type { AccessRequest, ActionPolicyDocument, Guardrail, HumanRole, KeyMeta, RiskTier } from "./types.ts"
 
-export const VERSION = "0.4.2"
+export const VERSION = "0.4.3"
 const TIERS = new Set(["low", "medium", "high", "critical"])
 const ROLES = new Set(["superadmin", "admin", "user"])
 const BUOY_KINDS = new Set(["harbor", "custom"])
@@ -55,6 +55,23 @@ async function readBody(req: Request) {
   } catch {
     return null
   }
+}
+
+/** Human-readable explanation for a denied human key action, naming the rule that would allow it. */
+function policyDenialMessage(action: string, ref: string, reason: string) {
+  const verb = action.replace(/^keys\./, "")
+  const parsed = parseKeyRef(ref)
+  const where = parsed ? `${parsed.org}/${parsed.project}` : "this project"
+  if (reason === "no_matching_default") {
+    return `No policy allows people to ${verb} keys in ${where}. Add a "${action}" default for actor "human" under Policy.`
+  }
+  if (reason === "policy_deny") {
+    return `Policy denies people from ${verb}-ing keys in ${where}. Change the "${action}" rule for actor "human" under Policy.`
+  }
+  if (reason === "invalid_policy") {
+    return `The policy for ${where} is invalid, so ${verb} is denied. Fix it under Policy.`
+  }
+  return `Policy denied ${action} in ${where} (${reason}).`
 }
 
 function isOpenRoute(method: string, path: string) {
@@ -214,7 +231,10 @@ export function createApp(haven: Haven) {
       resource: input.ref,
     })
     if (decision.outcome === "deny") {
-      return err(403, "policy_denied", decision.reason)
+      return err(403, "policy_denied", policyDenialMessage(input.action, input.ref, decision.reason), {
+        reason: decision.reason,
+        action: input.action,
+      })
     }
     if (decision.outcome === "approval_required") {
       const existing = haven.listAccessRequests({

@@ -195,3 +195,34 @@ test("POST /v1/secrets/delete removes the key after typed-name confirmation", as
   const { secrets } = await list.json()
   expect(secrets.some((s: { name: string }) => s.name === "DOOMED")).toBe(false)
 })
+
+test("a policy denial on a human key action explains what to change", async () => {
+  const handle = await app()
+  const cookie = await login(handle)
+  const h = { "content-type": "application/json", cookie }
+  const put = await handle(
+    new Request("http://127.0.0.1/v1/secrets", {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({ org: "demo", project: "default", env: "dev", name: "NO_POLICY", value: "v1" }),
+    }),
+  )
+  const { ref } = await put.json()
+
+  const res = await handle(
+    new Request("http://127.0.0.1/v1/secrets/delete", {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({ ref, confirm_name: "NO_POLICY" }),
+    }),
+  )
+  expect(res.status).toBe(403)
+  const body = await res.json()
+  expect(body.error).toBe("policy_denied")
+  expect(body.reason).toBe("no_matching_default")
+  expect(body.action).toBe("keys.delete")
+  expect(body.message).toContain("keys.delete")
+  expect(body.message).toContain("demo/default")
+  expect(body.message).toContain("Policy")
+  expect(body.message).not.toBe("no_matching_default")
+})

@@ -117,6 +117,23 @@ async function api(path: string, init: RequestInit = {}) {
   return data
 }
 
+const POLICY_ACTIONS = [
+  ["keys.resolve", "keys.resolve — agent reads a secret"],
+  ["keys.reveal", "keys.reveal — person views a secret"],
+  ["keys.update", "keys.update — person changes a secret"],
+  ["keys.delete", "keys.delete — person deletes a secret"],
+] as const
+
+function ActionSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const known = POLICY_ACTIONS.some(([action]) => action === value)
+  return (
+    <select className="mono" value={value} onChange={(event) => onChange(event.target.value)}>
+      {known ? null : <option value={value}>{value}</option>}
+      {POLICY_ACTIONS.map(([action, label]) => <option key={action} value={action}>{label}</option>)}
+    </select>
+  )
+}
+
 export function App() {
   const [me, setMe] = useState<{ username: string; orgs: OrgMem[] } | null>(null)
   const [checking, setChecking] = useState(true)
@@ -1532,7 +1549,7 @@ function PolicyWorkspace({ org, canOrg }: { org: string; canOrg: boolean }) {
         <tbody>
           {document.defaults.map((row, index) => (
             <tr key={`default-${index}`}>
-              <td><input className="mono" value={row.action} onChange={(event) => updateDefault(index, { action: event.target.value })} /></td>
+              <td><ActionSelect value={row.action} onChange={(action) => updateDefault(index, { action })} /></td>
               <td>
                 <select value={row.actor_type} onChange={(event) => updateDefault(index, { actor_type: event.target.value as PolicyActorType })}>
                   <option value="agent">agent</option><option value="human">human</option>
@@ -1577,7 +1594,7 @@ function PolicyWorkspace({ org, canOrg }: { org: string; canOrg: boolean }) {
         <tbody>
           {document.minimums.map((row, index) => (
             <tr key={`minimum-${index}`}>
-              <td><input className="mono" value={row.action} onChange={(event) => updateMinimum(index, { action: event.target.value })} /></td>
+              <td><ActionSelect value={row.action} onChange={(action) => updateMinimum(index, { action })} /></td>
               <td>
                 <select value={row.actor_type} onChange={(event) => updateMinimum(index, { actor_type: event.target.value as PolicyActorType })}>
                   <option value="agent">agent</option><option value="human">human</option>
@@ -1617,7 +1634,7 @@ function PolicyWorkspace({ org, canOrg }: { org: string; canOrg: boolean }) {
 
       <h3 style={{ marginTop: 32 }}>Preview candidate</h3>
       <div className="row">
-        <div><label>Action</label><input className="mono" value={previewInput.action} onChange={(event) => setPreviewInput({ ...previewInput, action: event.target.value })} /></div>
+        <div><label>Action</label><ActionSelect value={previewInput.action} onChange={(action) => setPreviewInput({ ...previewInput, action })} /></div>
         <div><label>Actor type</label><select value={previewInput.actor_type} onChange={(event) => setPreviewInput({ ...previewInput, actor_type: event.target.value as PolicyActorType })}><option value="agent">agent</option><option value="human">human</option></select></div>
         <div><label>Berth</label><select value={previewInput.environment} onChange={(event) => setPreviewInput({ ...previewInput, environment: event.target.value })}><option value="dev">dev</option><option value="prod">prod</option></select></div>
       </div>
